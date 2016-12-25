@@ -14,7 +14,9 @@
 */
 
 #include<stdio.h>
+#include<stdlib.h>
 #include<stdbool.h>
+#include<ctype.h>
 
 #include<time.h>
 #include<blake2.h>
@@ -23,6 +25,8 @@
 #include"sha256.h"
 #include <sys/time.h>
 #include "curve25519.h"
+
+#include <unistd.h>
 
 void waves_sha3_blake2b_composite(uint8_t *public_key, int data_length, uint8_t *result) {
 	blake2b_state S[1];
@@ -251,37 +255,109 @@ uint64_t calculate_probability_50(char *mask) {
     return 1 / probability;
 }
 
+typedef struct {
+    int threads;
+    bool testnet;
+    char *mask;
+} vanity_settings;
+
+void display_settings(vanity_settings settings) {
+    printf("Vanity miner settings:\n");
+    printf("CPU threads: %d\n", settings.threads);
+    printf("Network: ");
+    if(settings.testnet)
+        printf("Testnet\n");
+    else
+        printf("Mainnet\n");
+    printf("Mask: %s\n\n", settings.mask);
+}
+
+vanity_settings default_settings() {
+    vanity_settings settings;
+    settings.threads = sysconf(_SC_NPROCESSORS_ONLN);
+    settings.testnet = true;
+//    settings.testnet = false;
+    settings.mask = NULL;
+    return settings;
+}
+
+void help(int argc, char **argv) {
+    printf("Usage:\n  %s [OPTION...]\n\n", argv[0]);
+    printf("Mask Options:\n");
+
+//    printf("\nFor example mask #####aaa may generate address %s\n\n", "3MvMeaaaLm32f5JzsQQxYhqKL2fbrEQStCs");
+}
+
+vanity_settings parse_settings(int argc, char **argv) {
+    vanity_settings settings = default_settings();
+    int c;
+    while ((c = getopt (argc, argv, "hm:")) != -1)
+        switch (c)
+        {
+          case 'h':
+            help(argc, argv);
+            exit(0);
+          case 'm':
+            settings.mask = optarg;
+            break;
+
+          case '?':
+            if (isprint (optopt))
+                printf("Unknown option -%c.\n\n", optopt);
+
+            help(argc, argv);
+            exit(1);
+          default:
+            abort();
+        }
+
+    if(argc > optind) {
+
+        help(argc, argv);
+        exit(1);
+    }
+    return settings;
+}
+
 int main(int argc, char **argv) {
     if(unit_test() != 0)
         return -1;
+ /*
     if(argc == 1) {
         printf("Usage: %s mask\n", argv[0]);
         printf("\nFor example mask #####aaa may generate address %s\n\n", "3MvMeaaaLm32f5JzsQQxYhqKL2fbrEQStCs");
         return -1;
     }
+*/
+    vanity_settings settings = parse_settings(argc, argv);
+//    settings = parse_options(settings);
+ //   settings.mask = argv[1];
+  //  settings = ;
+
+    display_settings(settings);
 
     bool testnet = true;
 
-    char *mask = argv[1];
     char seed[128];
     char address[50];
 
     calculate_heat_map();
-    uint64_t probability_50 = calculate_probability_50(mask);
+    uint64_t probability_50 = calculate_probability_50(settings.mask);
     if(probability_50 == UINT64_T_MAX) {
         printf("It's impossible to generate this address.\n");
         return -1;
     }
-    printf("Iterations expected: %lu\n", probability_50);
+    printf("Starting calculations:\n");
+//    printf("Iterations expected: %lu\n", probability_50);
 
-    const int ITERATIONS_PER_LOOP = 1000;
+    const int ITERATIONS_PER_LOOP = 500;
 
     struct timeval tval_before, tval_after, tval_result;
     gettimeofday(&tval_before, NULL);
 
     uint64_t iterations = 0;
     while(true) {
-        int iter = generate_addresses(testnet, ITERATIONS_PER_LOOP, mask, seed, address);
+        int iter = generate_addresses(testnet, ITERATIONS_PER_LOOP, settings.mask, seed, address);
         iterations += iter;
         if(iter != ITERATIONS_PER_LOOP) {
             iterations++;
@@ -306,7 +382,7 @@ int main(int argc, char **argv) {
             int s = (int)tval_result.tv_sec % 60;
 
             printf("          ");
-            printf("\rIterations: %lu   Elapsed time: %lu d %d h %d m %d s   Speed: %.2f keys/second   50%% chance: %lu d %lu h %d m %d s", iterations, d, h, m, s, speed, probability_50_h / 24, probability_50_h % 24, probability_50_m, probability_50_s);
+            printf("\rIterations: %lu   Elapsed time: %lu d %d h %d m %d s   Speed: %.2f keys/second   Expected time: %lu d %lu h %d m %d s", iterations, d, h, m, s, speed, probability_50_h / 24, probability_50_h % 24, probability_50_m, probability_50_s);
 //            print_heat_map();
             fflush(stdout);
         }
