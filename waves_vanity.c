@@ -22,9 +22,7 @@
 #include"sha3.h"
 #include"sha256.h"
 #include <sys/time.h>
-
-extern void curve25519_donna(unsigned char *output, const unsigned char *a,
-                             const unsigned char *b);
+#include "curve25519.h"
 
 void waves_sha3_blake2b_composite(uint8_t *public_key, int data_length, uint8_t *result) {
 	blake2b_state S[1];
@@ -80,8 +78,10 @@ void seed_to_address(char *key, bool testnet, char *output) {
 
 	uint8_t pubkey[32];
 
-	static const uint8_t basepoint[32] = {9};
-	curve25519_donna(pubkey, privkey, basepoint);
+//    curve25519_key pk;
+    curve25519_donna_basepoint(pubkey, privkey);
+//	static const uint8_t basepoint[32] = {9};
+//	curve25519_donna(pubkey, privkey, basepoint);
 
 	waves_public_key_to_account(pubkey, testnet, output);
 }
@@ -165,7 +165,7 @@ int unit_test() {
 bool check_mask(char *mask, char address[50]) {
     size_t len = strlen(mask);
     for(int i = 0 ; i < len ; i++) {
-        if(mask[i] != '*' && address[i] != mask[i])
+        if(mask[i] != '_' && address[i] != mask[i])
             return false;
     }
     return true;
@@ -200,12 +200,14 @@ int generate_addresses(bool testnet, int iterations, char *mask, char seed[128],
     	uint8_t sss[] = {139, 113, 43, 11, 22, 55, 41, 66, 10, 30, 50, 77, 112, 41, 23, 11, 0};
         char key[128];
         size_t length = 128;
-		sprintf(seed, "%d%s%ld", i, sss, time(NULL));
+        struct timeval tval;
+        gettimeofday(&tval, NULL);
+		sprintf(seed, "%d%s%ld%ld", i, sss, time(NULL), tval.tv_usec);
    		waves_sha3_blake2b_composite((uint8_t*)seed, strlen(seed), (uint8_t*)key);
  		b58enc(seed, &length, key, 20);
 		seed[length] = 0;
 
-        seed_to_address(key, testnet, address);
+        seed_to_address(seed, testnet, address);
 
         for(int u = 0 ; u < strlen(address) ; u++)
            heat_map[u][base58char_to_i(address[u])]++;
@@ -238,7 +240,7 @@ void print_heat_map() {
 uint64_t calculate_probability_50(char *mask) {
     double probability = 1.;
     for(int i = 0 ; i < strlen(mask) ; i++) {
-        if(mask[i] != '*') {
+        if(mask[i] != '_') {
             if(base58char_to_i(mask[i]) < 0)
                 return UINT64_T_MAX;
             probability *= heat_map_f[i][base58char_to_i(mask[i])];
@@ -250,13 +252,13 @@ uint64_t calculate_probability_50(char *mask) {
 }
 
 int main(int argc, char **argv) {
-    if(argc == 1) {
-        printf("Usage: %s mask\n", argv[0]);
-        printf("\nFor example mask *****aaa may generate address %s", "3MvMeaaaLm32f5JzsQQxYhqKL2fbrEQStCs");
-        return -1;
-    }
     if(unit_test() != 0)
         return -1;
+    if(argc == 1) {
+        printf("Usage: %s mask\n", argv[0]);
+        printf("\nFor example mask #####aaa may generate address %s\n\n", "3MvMeaaaLm32f5JzsQQxYhqKL2fbrEQStCs");
+        return -1;
+    }
 
     bool testnet = true;
 
@@ -270,6 +272,7 @@ int main(int argc, char **argv) {
         printf("It's impossible to generate this address.\n");
         return -1;
     }
+    printf("Iterations expected: %lu\n", probability_50);
 
     const int ITERATIONS_PER_LOOP = 1000;
 
@@ -282,7 +285,7 @@ int main(int argc, char **argv) {
         iterations += iter;
         if(iter != ITERATIONS_PER_LOOP) {
             iterations++;
-            printf("\nYour address:\n%lu %s\n", iterations, address);
+            printf("\n_Iterations: %lu\nAddress: %s\nPassword: %s\n", iterations, address, seed);
             break;
         } else {
             gettimeofday(&tval_after, NULL);
