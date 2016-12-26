@@ -17,153 +17,208 @@
 #include<stdlib.h>
 #include<stdbool.h>
 #include<ctype.h>
+#include<pthread.h>
 
 #include<time.h>
 #include<blake2.h>
 #include<libbase58.h>
 #include"sha3.h"
 #include"sha256.h"
-#include <sys/time.h>
-#include "curve25519.h"
+#include<sys/time.h>
+#include"curve25519.h"
 
-#include <unistd.h>
+#include<unistd.h>
+#include<sys/statvfs.h>
+
+const int ITERATIONS_PER_LOOP = 512;
 
 void waves_sha3_blake2b_composite(uint8_t *public_key, int data_length, uint8_t *result) {
-	blake2b_state S[1];
-	sha3_context c;
+    blake2b_state S[1];
+    sha3_context c;
 
-	blake2b_init(S, 32);
-	blake2b_update(S, public_key, data_length);
-	blake2b_final(S, result, 32);
+    blake2b_init(S, 32);
+    blake2b_update(S, public_key, data_length);
+    blake2b_final(S, result, 32);
 
-	sha3_Init256(&c);
-	sha3_Update(&c, result, 32);
-	sha3_Finalize(&c);
+    sha3_Init256(&c);
+    sha3_Update(&c, result, 32);
+    sha3_Finalize(&c);
 
-	memcpy(result, c.sb, 32);
+    memcpy(result, c.sb, 32);
 }
 
 void waves_public_key_to_account(uint8_t public_key[32], bool testnet, char *output) {
-	char testnet_char = testnet ? 'T' : 'W';
-	size_t length = 512;
-	uint8_t public_key_hash[32];
-	uint8_t without_checksum[512];
-	uint8_t checksum[32];
-	waves_sha3_blake2b_composite(public_key, 32, (uint8_t*)public_key_hash);
+    char testnet_char = testnet ? 'T' : 'W';
+    size_t length = 512;
+    uint8_t public_key_hash[32];
+    uint8_t without_checksum[512];
+    uint8_t checksum[32];
+    waves_sha3_blake2b_composite(public_key, 32, (uint8_t*)public_key_hash);
 
-	without_checksum[0] = 0x01;
-	without_checksum[1] = testnet_char;
-	memcpy(&without_checksum[2], public_key_hash, 20);
+    without_checksum[0] = 0x01;
+    without_checksum[1] = testnet_char;
+    memcpy(&without_checksum[2], public_key_hash, 20);
 
-	waves_sha3_blake2b_composite(without_checksum, 22, (uint8_t*)checksum);
+    waves_sha3_blake2b_composite(without_checksum, 22, (uint8_t*)checksum);
 
-	memcpy(&without_checksum[22], checksum, 4);
+    memcpy(&without_checksum[22], checksum, 4);
 
-	b58enc(output, &length, without_checksum, 22 + 4);
-	output[length] = 0;
+    b58enc(output, &length, without_checksum, 22 + 4);
+    output[length] = 0;
 }
 
 void seed_to_address(char *key, bool testnet, char *output) {
-	char realkey[1024] = {0, 0, 0, 0};
-	memcpy(&realkey[4], key, strlen(key));
-	uint8_t privkey[32];
+    char realkey[1024] = {0, 0, 0, 0};
+    memcpy(&realkey[4], key, strlen(key));
+    uint8_t privkey[32];
 
-	SHA256_CTX ctx;
+    SHA256_CTX ctx;
 
-	waves_sha3_blake2b_composite((uint8_t*)realkey, strlen(key) + 4, privkey);
+    waves_sha3_blake2b_composite((uint8_t*)realkey, strlen(key) + 4, privkey);
 
-	sha256_init(&ctx);
-	sha256_update(&ctx, privkey, 32);
-	sha256_final(&ctx, privkey);
+    sha256_init(&ctx);
+    sha256_update(&ctx, privkey, 32);
+    sha256_final(&ctx, privkey);
 
-	privkey[0] &= 248;
-	privkey[31] &= 127;
-	privkey[31] |= 64;
+    privkey[0] &= 248;
+    privkey[31] &= 127;
+    privkey[31] |= 64;
 
-	uint8_t pubkey[32];
+    uint8_t pubkey[32];
 
-//    curve25519_key pk;
     curve25519_donna_basepoint(pubkey, privkey);
-//	static const uint8_t basepoint[32] = {9};
-//	curve25519_donna(pubkey, privkey, basepoint);
 
-	waves_public_key_to_account(pubkey, testnet, output);
+    waves_public_key_to_account(pubkey, testnet, output);
 }
 
-int unit_test() {
-	{
-		uint8_t input[] = "A nice, long test to make the day great! :-)";
-		uint8_t output[32];
-		uint8_t expected[] = {0x5d, 0xf3, 0xcf, 0x20, 0x20, 0x5d, 0x75, 0xe0, 0x9a, 0xe4, 0x6d, 0x13, 0xa8, 0xd9, 0x9a, 0x16, 0x17, 0x4d, 0x71, 0xc8, 0x4f, 0xfc, 0xc0, 0x03, 0x87, 0xfe, 0xc3, 0xd8, 0x1e, 0x39, 0xdc, 0xbe};
-		waves_sha3_blake2b_composite(input, strlen((char*)input), (uint8_t*)output);
-		if(memcmp(output, expected, 32) != 0) {
-			printf("Unit test 1 failed\n");
-			return -1;
-		}
-	}
+void unit_test_1() {
+#ifndef SKIP_UNIT_TEST
+    uint8_t input[] = "A nice, long test to make the day great! :-)";
+    uint8_t output[32];
+    uint8_t expected[] = {0x5d, 0xf3, 0xcf, 0x20, 0x20, 0x5d, 0x75, 0xe0, 0x9a, 0xe4, 0x6d, 0x13, 0xa8, 0xd9, 0x9a, 0x16, 0x17, 0x4d, 0x71, 0xc8, 0x4f, 0xfc, 0xc0, 0x03, 0x87, 0xfe, 0xc3, 0xd8, 0x1e, 0x39, 0xdc, 0xbe};
+    waves_sha3_blake2b_composite(input, strlen((char*)input), (uint8_t*)output);
+    if(memcmp(output, expected, 32) != 0) {
+        printf("Unit test 1 failed\n");
+        exit(-1);
+    }
+#endif
+}
 
-	{
-		uint8_t input[] = {0xd8, 0x5b, 0x2f, 0x9e, 0x00, 0xde, 0xa8, 0x88, 0x65, 0x55, 0x3b, 0x6f, 0x69, 0xda, 0x53, 0x18, 0xbe, 0x64, 0x4f, 0x4d, 0x39, 0xa9, 0xc4, 0x8e, 0xba, 0xed, 0x71, 0x46, 0xcb, 0x7a, 0xfb, 0x73};
-		char output[512];
-		char expected[] = "3PAtGGSLnHJ3wuK8jWPvAA487pKamvQHyQw";
-		waves_public_key_to_account(input, false, output);
-		if(strcmp(output, expected) != 0) {
-			printf("Unit test 2 failed\n");
-			return -1;
-		}
-	}
+void unit_test_2() {
+#ifndef SKIP_UNIT_TEST
+    uint8_t input[] = {0xd8, 0x5b, 0x2f, 0x9e, 0x00, 0xde, 0xa8, 0x88, 0x65, 0x55, 0x3b, 0x6f, 0x69, 0xda, 0x53, 0x18, 0xbe, 0x64, 0x4f, 0x4d, 0x39, 0xa9, 0xc4, 0x8e, 0xba, 0xed, 0x71, 0x46, 0xcb, 0x7a, 0xfb, 0x73};
+    char output[512];
+    char expected[] = "3PAtGGSLnHJ3wuK8jWPvAA487pKamvQHyQw";
+    waves_public_key_to_account(input, false, output);
+    if(strcmp(output, expected) != 0) {
+        printf("Unit test 2 failed\n");
+        exit(-1);
+    }
+#endif
+}
 
-	{
-		uint8_t input[] = {0xdb, 0x3b, 0xe4, 0xbb, 0x58, 0x3e, 0x58, 0xe5, 0x7b, 0xae, 0xb2, 0xa7, 0xad, 0x40, 0x8f, 0x73, 0xb2, 0x04, 0xab, 0x26, 0xd6, 0x4c, 0x73, 0x0e, 0xbb, 0xe1, 0x4d, 0xd0, 0xaf, 0x33, 0xe8, 0x23};
-		char output[512];
-		char expected[] = "3Mv61qe6egMSjRDZiiuvJDnf3Q1qW9tTZDB";
-		waves_public_key_to_account(input, true, output);
-		if(strcmp(output, expected) != 0) {
-			printf("Unit test 3 failed\n");
-			return -1;
-		}
-	}
+void unit_test_3() {
+#ifndef SKIP_UNIT_TEST
+    uint8_t input[] = {0xdb, 0x3b, 0xe4, 0xbb, 0x58, 0x3e, 0x58, 0xe5, 0x7b, 0xae, 0xb2, 0xa7, 0xad, 0x40, 0x8f, 0x73, 0xb2, 0x04, 0xab, 0x26, 0xd6, 0x4c, 0x73, 0x0e, 0xbb, 0xe1, 0x4d, 0xd0, 0xaf, 0x33, 0xe8, 0x23};
+    char output[512];
+    char expected[] = "3Mv61qe6egMSjRDZiiuvJDnf3Q1qW9tTZDB";
+    waves_public_key_to_account(input, true, output);
+    if(strcmp(output, expected) != 0) {
+        printf("Unit test 3 failed\n");
+        exit(-1);
+    }
+#endif
+}
 
-	{
-		uint8_t privkey[] = {0x88, 0x72, 0x7a, 0x03, 0x37, 0x7b, 0xfb, 0xa1, 0xb3, 0x65, 0x5c, 0x5e, 0xcb, 0x97, 0x8d, 0xa1, 0x71, 0xe0, 0x24, 0xaa, 0xd7, 0x22, 0xee, 0x49, 0xff, 0xf9, 0x21, 0x4a, 0x74, 0x7e, 0x70, 0x61};
-		uint8_t expected[] = {0x92, 0xf2, 0xc1, 0x71, 0xcb, 0x60, 0x78, 0xe6, 0x05, 0x50, 0xcb, 0x99, 0x53, 0xfc, 0x3f, 0x11, 0x80, 0x31, 0xd6, 0x31, 0x4c, 0xb6, 0x40, 0x0d, 0xfd, 0x72, 0x11, 0xf6, 0x01, 0x8d, 0x1d, 0x2b};
-		privkey[0] &= 248;
-		privkey[31] &= 127;
-		privkey[31] |= 64;
+void unit_test_4() {
+#ifndef SKIP_UNIT_TEST
+    uint8_t privkey[] = {0x88, 0x72, 0x7a, 0x03, 0x37, 0x7b, 0xfb, 0xa1, 0xb3, 0x65, 0x5c, 0x5e, 0xcb, 0x97, 0x8d, 0xa1, 0x71, 0xe0, 0x24, 0xaa, 0xd7, 0x22, 0xee, 0x49, 0xff, 0xf9, 0x21, 0x4a, 0x74, 0x7e, 0x70, 0x61};
+    uint8_t expected[] = {0x92, 0xf2, 0xc1, 0x71, 0xcb, 0x60, 0x78, 0xe6, 0x05, 0x50, 0xcb, 0x99, 0x53, 0xfc, 0x3f, 0x11, 0x80, 0x31, 0xd6, 0x31, 0x4c, 0xb6, 0x40, 0x0d, 0xfd, 0x72, 0x11, 0xf6, 0x01, 0x8d, 0x1d, 0x2b};
+    privkey[0] &= 248;
+    privkey[31] &= 127;
+    privkey[31] |= 64;
 
-		uint8_t output[32];
+    uint8_t output[32];
 
-		static const uint8_t basepoint[32] = {9};
-		curve25519_donna(output, privkey, basepoint);
-		
-		if(memcmp(output, expected, 32) != 0) {
-			printf("Unit test 4 failed\n");
-			return -1;
-		}
-	}
+    static const uint8_t basepoint[32] = {9};
+    curve25519_donna(output, privkey, basepoint);
+    
+    if(memcmp(output, expected, 32) != 0) {
+        printf("Unit test 4 failed\n");
+        exit(-1);
+    }
+#endif
+}
 
-	{
-		char test[] = "industry detail rifle scan weird join crawl connect demand top club hello entry second cargo";
-		char output[512];
-		char expected[] = "3NCyi16BFfFvYhCeg1pKrMKMLDXwazkPuhP";
-		seed_to_address(test, true, output);
-		if(strcmp(output, expected) != 0) {
-			printf("Unit test 5 failed\n");
-			return -1;
-		}
-	}
+void unit_test_5() {
+#ifndef SKIP_UNIT_TEST
+    char test[] = "industry detail rifle scan weird join crawl connect demand top club hello entry second cargo";
+    char output[512];
+    char expected[] = "3NCyi16BFfFvYhCeg1pKrMKMLDXwazkPuhP";
+    seed_to_address(test, true, output);
+    if(strcmp(output, expected) != 0) {
+        printf("Unit test 5 failed\n");
+        exit(-1);
+    }
+#endif
+}
 
-	{
-		char test[] = "try south announce math salute shoe blast finish state battle nest tube enjoy yellow layer";
-		char output[512];
-		char expected[] = "3PJXLWbp5ft3LCeesqgJyTpGQRgU9nTY3PA";
-		seed_to_address(test, false, output);
-		if(strcmp(output, expected) != 0) {
-			printf("Unit test 6 failed\n");
-			return -1;
-		}
-	}
-    return 0;
+void unit_test_6() {
+#ifndef SKIP_UNIT_TEST
+    char test[] = "try south announce math salute shoe blast finish state battle nest tube enjoy yellow layer";
+    char output[512];
+    char expected[] = "3PJXLWbp5ft3LCeesqgJyTpGQRgU9nTY3PA";
+    seed_to_address(test, false, output);
+    if(strcmp(output, expected) != 0) {
+        printf("Unit test 6 failed\n");
+        exit(-1);
+    }
+#endif
+}
+
+void unit_test() {
+    unit_test_1();
+    unit_test_2();
+    unit_test_3();
+    unit_test_4();
+    unit_test_5();
+    unit_test_6();
+}
+
+void get_entropy(uint8_t entropy[64]) {
+    uint8_t entropy_seed[32];
+
+    FILE *fp;
+    fp = fopen("/dev/urandom", "r");
+    if(fread(&entropy_seed, 1, 32, fp) < 32) {
+        printf("Error: Cannot get entropy\n");
+        exit(-1);
+    }
+    fclose(fp);
+
+    struct timeval tval;
+    gettimeofday(&tval, NULL);
+   
+    blake2b_state S[1];
+    blake2b_init(S, 64);
+    blake2b_update(S, entropy_seed, 256);
+ 
+    for(int i = 0 ; i < 10 ; i++) {
+        blake2b_update(S, (char*)&tval, sizeof(struct timeval));
+        unit_test_1();
+        blake2b_update(S, (char*)&tval, sizeof(struct timeval));
+        unit_test_2();
+        blake2b_update(S, (char*)&tval, sizeof(struct timeval));
+        unit_test_3();
+        blake2b_update(S, (char*)&tval, sizeof(struct timeval));
+        unit_test_4();
+        blake2b_update(S, (char*)&tval, sizeof(struct timeval));
+        unit_test_5();
+        blake2b_update(S, (char*)&tval, sizeof(struct timeval));
+        unit_test_6();
+        blake2b_update(S, (char*)&tval, sizeof(struct timeval));
+    }
+    blake2b_final(S, entropy, 64);
 }
 
 bool check_mask(char *mask, char address[50]) {
@@ -198,27 +253,34 @@ void calculate_heat_map() {
     }
 }
 
-int generate_addresses(bool testnet, int iterations, char *mask, char seed[128], char address[50]) {
+inline
+void fakebase58(char seed[128], uint8_t entropy[64]) {
+    uint16_t *ent = (uint16_t*)entropy;
+    for(int i = 0 ; i < 27 ; i++) {
+        seed[i] = base58_map[ent[i] % 58];
+    }
+    seed[27] = 0;
+}
+
+int generate_addresses(bool testnet, int iterations, char *mask, char seed[128], char address[50], uint8_t entropy[64]) {
+    blake2b_state S[1];
+    blake2b_init(S, 64);
+    blake2b_update(S, entropy, 64);
+    blake2b_final(S, entropy, 64);
+
+    uint32_t *ent = (uint32_t*)entropy;
     for(int i = 0; i < iterations ; i++) {
-        // TODO: Make this better. :-)
-    	uint8_t sss[] = {139, 113, 43, 11, 22, 55, 41, 66, 10, 30, 50, 77, 112, 41, 23, 11, 0};
-        char key[128];
-        size_t length = 128;
-        struct timeval tval;
-        gettimeofday(&tval, NULL);
-		sprintf(seed, "%d%s%ld%ld", i, sss, time(NULL), tval.tv_usec);
-   		waves_sha3_blake2b_composite((uint8_t*)seed, strlen(seed), (uint8_t*)key);
- 		b58enc(seed, &length, key, 20);
-		seed[length] = 0;
+        ent[0]++;
+
+        fakebase58(seed, entropy);
 
         seed_to_address(seed, testnet, address);
 
-        for(int u = 0 ; u < strlen(address) ; u++)
-           heat_map[u][base58char_to_i(address[u])]++;
+//        for(int u = 0 ; u < strlen(address) ; u++)
+//           heat_map[u][base58char_to_i(address[u])]++;
 
-        if(check_mask(mask, address)) {
+        if(check_mask(mask, address))
             return i;
-        }
     }
     return iterations;
 }
@@ -261,6 +323,16 @@ typedef struct {
     char *mask;
 } vanity_settings;
 
+typedef struct {
+    int thread_no;
+    vanity_settings *settings;
+    uint64_t iterations;
+    bool completed;
+    char seed[128];
+    char address[128];
+    bool keep_working;
+} worker_thread_struct;
+
 void display_settings(vanity_settings settings) {
     printf("Vanity miner settings:\n");
     printf("CPU threads: %d\n", settings.threads);
@@ -286,6 +358,43 @@ void help(int argc, char **argv) {
     printf("Mask Options:\n");
 
 //    printf("\nFor example mask #####aaa may generate address %s\n\n", "3MvMeaaaLm32f5JzsQQxYhqKL2fbrEQStCs");
+}
+
+void *worker_thread(void *data) {
+    worker_thread_struct *worker = (worker_thread_struct*)data;
+    vanity_settings *settings = worker->settings;
+
+    uint8_t entropy[64];
+    get_entropy(entropy);
+
+    while(worker->keep_working) {
+        uint64_t iter = generate_addresses(settings->testnet, ITERATIONS_PER_LOOP, settings->mask, worker->seed, worker->address, entropy);
+        worker->iterations += iter;
+        if(iter != ITERATIONS_PER_LOOP) {
+            worker->iterations++;
+            worker->completed = true;
+            worker->keep_working = false;
+        }
+    }
+    pthread_exit((void*) data);
+}
+
+int address_found(vanity_settings settings, worker_thread_struct *workers, char **seed, char **address) {
+    for(int i = 0 ; i < settings.threads ; i++) {
+        if(workers[i].completed) {
+            *seed = workers[i].seed;
+            *address = workers[i].address;
+            return i;
+        }
+    }
+    return -1;
+}
+
+int sum_iterations(vanity_settings settings, worker_thread_struct *workers) {
+    int sum = 0;
+    for(int i = 0 ; i < settings.threads ; i++)
+        sum += workers[i].iterations;
+    return sum;
 }
 
 vanity_settings parse_settings(int argc, char **argv) {
@@ -320,26 +429,13 @@ vanity_settings parse_settings(int argc, char **argv) {
 }
 
 int main(int argc, char **argv) {
-    if(unit_test() != 0)
-        return -1;
- /*
-    if(argc == 1) {
-        printf("Usage: %s mask\n", argv[0]);
-        printf("\nFor example mask #####aaa may generate address %s\n\n", "3MvMeaaaLm32f5JzsQQxYhqKL2fbrEQStCs");
-        return -1;
-    }
-*/
+    unit_test();
+
     vanity_settings settings = parse_settings(argc, argv);
-//    settings = parse_options(settings);
- //   settings.mask = argv[1];
-  //  settings = ;
 
     display_settings(settings);
 
-    bool testnet = true;
-
-    char seed[128];
-    char address[50];
+    char *seed, *address;
 
     calculate_heat_map();
     uint64_t probability_50 = calculate_probability_50(settings.mask);
@@ -347,30 +443,46 @@ int main(int argc, char **argv) {
         printf("It's impossible to generate this address.\n");
         return -1;
     }
-    printf("Starting calculations:\n");
-//    printf("Iterations expected: %lu\n", probability_50);
 
-    const int ITERATIONS_PER_LOOP = 500;
+    worker_thread_struct workers[settings.threads];
+    pthread_attr_t attr;
+    pthread_t threads[settings.threads];
+    for(int i = 0 ; i < settings.threads ; i++) {
+        workers[i].thread_no = i;
+        workers[i].completed = 0;
+        workers[i].iterations = 0;
+        workers[i].settings = &settings;
+        workers[i].keep_working = true;
+    }
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+
+    printf("Iterations expected: %lu\n", probability_50);
 
     struct timeval tval_before, tval_after, tval_result;
     gettimeofday(&tval_before, NULL);
 
-    uint64_t iterations = 0;
+    printf("Starting workers...\n");
+
+    for(int i = 0 ; i < settings.threads ; i++) {
+       int rc = pthread_create(&threads[i], &attr, worker_thread, (void *)&workers[i]);
+       if(rc) {
+          printf("ERROR; return code from pthread_create() is %d\n", rc);
+          exit(-1);
+       }        
+    }
+
     while(true) {
-        int iter = generate_addresses(testnet, ITERATIONS_PER_LOOP, settings.mask, seed, address);
-        iterations += iter;
-        if(iter != ITERATIONS_PER_LOOP) {
-            iterations++;
-            printf("\n_Iterations: %lu\nAddress: %s\nPassword: %s\n", iterations, address, seed);
-            break;
-        } else {
+        usleep(1000 * 500); // 500ms
+        uint64_t iterations = sum_iterations(settings, workers);
+        int winning_worker = address_found(settings, workers, &seed, &address);
+        if(winning_worker < 0) {
             gettimeofday(&tval_after, NULL);
             timersub(&tval_after, &tval_before, &tval_result);
             uint64_t usec = (long int)(tval_result.tv_sec * 1000) + (long int)(tval_result.tv_usec / 1000);//printf("Time elapsed: %ld.%06ld\n", (long int)tval_result.tv_sec, (long int)tval_result.tv_usec);
             double speed = iterations;
             speed /= usec;
             speed *= 1000;
-
             
             uint64_t probability_50_h = (probability_50 / speed) / 3600;
             int probability_50_m = (uint64_t)((probability_50 / speed) / 60) % 60;
@@ -385,6 +497,10 @@ int main(int argc, char **argv) {
             printf("\rIterations: %lu   Elapsed time: %lu d %d h %d m %d s   Speed: %.2f keys/second   Expected time: %lu d %lu h %d m %d s", iterations, d, h, m, s, speed, probability_50_h / 24, probability_50_h % 24, probability_50_m, probability_50_s);
 //            print_heat_map();
             fflush(stdout);
+        } else {
+            printf("Worker: %d\n", winning_worker);
+            printf("\nOverall iterations: %lu\nAddress: %s\nPassword: %s\n", iterations, address, seed);
+            break;
         }
     }
     return 0;
