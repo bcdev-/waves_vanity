@@ -30,7 +30,7 @@
 #include<unistd.h>
 #include<sys/statvfs.h>
 
-const int ITERATIONS_PER_LOOP = 512;
+const int ITERATIONS_PER_LOOP = 513;
 
 typedef struct {
     int threads;
@@ -289,6 +289,8 @@ int generate_addresses(bool testnet, int iterations, vanity_settings *settings, 
     uint32_t *ent = (uint32_t*)entropy;
     for(int i = 0; i < iterations ; i++) {
         ent[0]++;
+        if(i % 58 == 0)
+            ent[1]++;
 
         fakebase58(seed, entropy);
 
@@ -297,7 +299,8 @@ int generate_addresses(bool testnet, int iterations, vanity_settings *settings, 
 //        for(int u = 0 ; u < strlen(address) ; u++)
 //           heat_map[u][base58char_to_i(address[u])]++;
 
-//        printf("Address: %s\n", address);
+//        fprintf(stderr, "Seed: %s\n", seed);
+//        fprintf(stderr, "Address: %s\n", address);
 
         if(check_mask(settings, address))
             return i;
@@ -355,7 +358,7 @@ uint64_t calculate_probability_50(vanity_settings *settings) {
     }
     if (probability == 0.)
         return UINT64_T_MAX;
-    return 1 / probability * 5;
+    return 1 / probability / 2;
 }
 
 typedef struct {
@@ -517,7 +520,7 @@ int main(int argc, char **argv) {
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
 
-    printf("Iterations expected [very optimistic]: %lu\n", probability_50);
+    printf("Iterations expected: %lu\n", probability_50);
 
     struct timeval tval_before, tval_after, tval_result;
     gettimeofday(&tval_before, NULL);
@@ -553,8 +556,7 @@ int main(int argc, char **argv) {
             int m = ((int)tval_result.tv_sec / 60) % 60;
             int s = (int)tval_result.tv_sec % 60;
 
-
-            printf("\rIterations: %lu   Elapsed time: %lu d %d h %d m %d s   Speed: %.2f keys/second   Expected time [very optimistic]: %lu d %lu h %d m %d s", iterations, d, h, m, s, speed, probability_50_h / 24, probability_50_h % 24, probability_50_m, probability_50_s);
+            printf("\rIterations: %lu   Elapsed time: %lu d %d h %d m %d s   Speed: %.2f keys/second   50%% chance of finding: %lu d %lu h %d m %d s", iterations, d, h, m, s, speed, probability_50_h / 24, probability_50_h % 24, probability_50_m, probability_50_s);
             printf("          \r");
 //            print_heat_map();
 //            print_heat_map_f();
