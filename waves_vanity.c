@@ -32,6 +32,13 @@
 
 const int ITERATIONS_PER_LOOP = 512;
 
+typedef struct {
+    int threads;
+    bool testnet;
+    char *mask;
+    char case_mask[36];
+} vanity_settings;
+
 void waves_sha3_blake2b_composite(uint8_t *public_key, int data_length, uint8_t *result) {
     blake2b_state S[1];
     sha3_context c;
@@ -221,11 +228,22 @@ void get_entropy(uint8_t entropy[64]) {
     blake2b_final(S, entropy, 64);
 }
 
-bool check_mask(char *mask, char address[50]) {
+bool check_mask(vanity_settings *settings, char address[50]) {
+    char *mask = settings->mask;
+    char *case_mask = settings->case_mask;
+
     size_t len = strlen(mask);
     for(int i = 0 ; i < len ; i++) {
-        if(mask[i] != '_' && address[i] != mask[i])
-            return false;
+        if(mask[i] != '_') {
+            if(case_mask[i] == '_' || isdigit(mask[i])) {
+                if(address[i] != mask[i])
+                    return false;
+            } else {
+                char alt = mask[i] < 'a'? mask[i] + 32 : mask[i] - 32;
+                if(address[i] != mask[i] && address[i] != alt)
+                    return false;
+            }
+        }
     }
     return true;
 }
@@ -262,7 +280,7 @@ void fakebase58(char seed[128], uint8_t entropy[64]) {
     seed[27] = 0;
 }
 
-int generate_addresses(bool testnet, int iterations, char *mask, char seed[128], char address[50], uint8_t entropy[64]) {
+int generate_addresses(bool testnet, int iterations, vanity_settings *settings, char seed[128], char address[50], uint8_t entropy[64]) {
     blake2b_state S[1];
     blake2b_init(S, 64);
     blake2b_update(S, entropy, 64);
@@ -279,7 +297,9 @@ int generate_addresses(bool testnet, int iterations, char *mask, char seed[128],
 //        for(int u = 0 ; u < strlen(address) ; u++)
 //           heat_map[u][base58char_to_i(address[u])]++;
 
-        if(check_mask(mask, address))
+//        printf("Address: %s\n", address);
+
+        if(check_mask(settings, address))
             return i;
     }
     return iterations;
@@ -301,27 +321,42 @@ void print_heat_map() {
     printf("}\n\n");
 }
 
+void print_heat_map_f() {
+    printf("\n\n");
+    for(int row = 0 ; row < 35 ; row++) {
+        for(int i = 0 ; i < 58 ; i++) {
+            printf("%f", heat_map_f[row][i]);
+            if(i < 57)
+                printf(", ");
+        }
+        printf("\n");
+    }
+    printf("\n\n");
+}
+
 #define UINT64_T_MAX 18446744073709551615UL
 
-uint64_t calculate_probability_50(char *mask) {
+uint64_t calculate_probability_50(vanity_settings *settings) {
+    char *mask = settings->mask;
+    char *case_mask = settings->case_mask;
+
     double probability = 1.;
     for(int i = 0 ; i < strlen(mask) ; i++) {
         if(mask[i] != '_') {
             if(base58char_to_i(mask[i]) < 0)
                 return UINT64_T_MAX;
-            probability *= heat_map_f[i][base58char_to_i(mask[i])];
+            if(case_mask[i] == '_')
+                probability *= heat_map_f[i][base58char_to_i(mask[i])];
+            else {
+                char alt = mask[i] < 'a'? mask[i] + 32 : mask[i] - 32;
+                probability *= heat_map_f[i][base58char_to_i(mask[i])] + heat_map_f[i][base58char_to_i(alt)];
+            }
         }
     }
     if (probability == 0.)
         return UINT64_T_MAX;
-    return 1 / probability;
+    return 1 / probability * 5;
 }
-
-typedef struct {
-    int threads;
-    bool testnet;
-    char *mask;
-} vanity_settings;
 
 typedef struct {
     int thread_no;
@@ -341,7 +376,8 @@ void display_settings(vanity_settings settings) {
         printf("Testnet\n");
     else
         printf("Mainnet\n");
-    printf("Mask: %s\n\n", settings.mask);
+    printf("Char mask: %s\n", settings.mask);
+    printf("Case mask: %s\n\n", settings.case_mask);
 }
 
 vanity_settings default_settings() {
@@ -350,14 +386,21 @@ vanity_settings default_settings() {
     settings.testnet = true;
 //    settings.testnet = false;
     settings.mask = NULL;
+    strcpy(settings.case_mask, "___________________________________");
+
     return settings;
 }
 
 void help(int argc, char **argv) {
     printf("Usage:\n  %s [OPTION...]\n\n", argv[0]);
+    printf("Help Options:\n");
+    printf("  -h                Show help options\n\n");
     printf("Mask Options:\n");
-
-//    printf("\nFor example mask #####aaa may generate address %s\n\n", "3MvMeaaaLm32f5JzsQQxYhqKL2fbrEQStCs");
+    printf("  -m {mask}         Char mask. _ is 'any character at this position'.\n  Any other character means 'this specific character at this position'.\n");
+    printf("Example: '%s -m ____eaaa' may generate address 3MvMeaaaLm32f5JzsQQxYhqKL2fbrEQStCs.\n\n", argv[0]);
+    printf("  -c {mask}         Case mask. ? means 'any case for a character'\n  _ means 'this specific case for a character'\n");
+    printf("The default case mask is: ___________________________________\n");
+    printf("Example: '%s -m __waves -c __ooo__' may generate address \n", argv[0]);
 }
 
 void *worker_thread(void *data) {
@@ -368,7 +411,7 @@ void *worker_thread(void *data) {
     get_entropy(entropy);
 
     while(worker->keep_working) {
-        uint64_t iter = generate_addresses(settings->testnet, ITERATIONS_PER_LOOP, settings->mask, worker->seed, worker->address, entropy);
+        uint64_t iter = generate_addresses(settings->testnet, ITERATIONS_PER_LOOP, settings, worker->seed, worker->address, entropy);
         worker->iterations += iter;
         if(iter != ITERATIONS_PER_LOOP) {
             worker->iterations++;
@@ -400,14 +443,28 @@ int sum_iterations(vanity_settings settings, worker_thread_struct *workers) {
 vanity_settings parse_settings(int argc, char **argv) {
     vanity_settings settings = default_settings();
     int c;
-    while ((c = getopt (argc, argv, "hm:")) != -1)
+    while ((c = getopt (argc, argv, "hm:t:c:")) != -1)
         switch (c)
         {
           case 'h':
             help(argc, argv);
             exit(0);
           case 'm':
+            if(strlen(optarg) > 35) {
+                help(argc, argv);
+                exit(1);
+            }
             settings.mask = optarg;
+            break;
+          case 'c':
+            if(strlen(optarg) > 35) {
+                help(argc, argv);
+                exit(1);
+            }
+            memcpy(settings.case_mask, optarg, strlen(optarg));
+            break;
+          case 't':
+            settings.threads = atoi(optarg);
             break;
 
           case '?':
@@ -421,7 +478,10 @@ vanity_settings parse_settings(int argc, char **argv) {
         }
 
     if(argc > optind) {
-
+        help(argc, argv);
+        exit(1);
+    }
+    if(settings.mask == NULL) {
         help(argc, argv);
         exit(1);
     }
@@ -438,7 +498,7 @@ int main(int argc, char **argv) {
     char *seed, *address;
 
     calculate_heat_map();
-    uint64_t probability_50 = calculate_probability_50(settings.mask);
+    uint64_t probability_50 = calculate_probability_50(&settings);
     if(probability_50 == UINT64_T_MAX) {
         printf("It's impossible to generate this address.\n");
         return -1;
@@ -457,7 +517,7 @@ int main(int argc, char **argv) {
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
 
-    printf("Iterations expected: %lu\n", probability_50);
+    printf("Iterations expected [very optimistic]: %lu\n", probability_50);
 
     struct timeval tval_before, tval_after, tval_result;
     gettimeofday(&tval_before, NULL);
@@ -493,12 +553,13 @@ int main(int argc, char **argv) {
             int m = ((int)tval_result.tv_sec / 60) % 60;
             int s = (int)tval_result.tv_sec % 60;
 
-            printf("          ");
-            printf("\rIterations: %lu   Elapsed time: %lu d %d h %d m %d s   Speed: %.2f keys/second   Expected time: %lu d %lu h %d m %d s", iterations, d, h, m, s, speed, probability_50_h / 24, probability_50_h % 24, probability_50_m, probability_50_s);
+
+            printf("\rIterations: %lu   Elapsed time: %lu d %d h %d m %d s   Speed: %.2f keys/second   Expected time [very optimistic]: %lu d %lu h %d m %d s", iterations, d, h, m, s, speed, probability_50_h / 24, probability_50_h % 24, probability_50_m, probability_50_s);
+            printf("          \r");
 //            print_heat_map();
+//            print_heat_map_f();
             fflush(stdout);
         } else {
-            printf("Worker: %d\n", winning_worker);
             printf("\nOverall iterations: %lu\nAddress: %s\nPassword: %s\n", iterations, address, seed);
             break;
         }
