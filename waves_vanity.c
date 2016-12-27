@@ -35,7 +35,7 @@ const int ITERATIONS_PER_LOOP = 513;
 typedef struct {
     int threads;
     bool testnet;
-    char *mask;
+    char mask[36];
     char case_mask[36];
 } vanity_settings;
 
@@ -228,23 +228,49 @@ void get_entropy(uint8_t entropy[64]) {
     blake2b_final(S, entropy, 64);
 }
 
-bool check_mask(vanity_settings *settings, char address[50]) {
+bool check_char(vanity_settings *settings, char address[50], int i) {
     char *mask = settings->mask;
     char *case_mask = settings->case_mask;
 
-    size_t len = strlen(mask);
-    for(int i = 0 ; i < len ; i++) {
-        if(mask[i] != '_') {
-            if(case_mask[i] == '_' || isdigit(mask[i])) {
-                if(address[i] != mask[i])
-                    return false;
-            } else {
-                char alt = mask[i] < 'a'? mask[i] + 32 : mask[i] - 32;
-                if(address[i] != mask[i] && address[i] != alt)
-                    return false;
-            }
-        }
+    if(case_mask[i] == '_') {
+        if(mask[i] == '_')
+            return true;
+        return mask[i] == address[i];
     }
+    else if(case_mask[i] == 'n') {
+        // Numbers
+        return address[i] >= '1' && address[i] <= '9';
+    }
+    else if(case_mask[i] == 'p') {
+        // Uppercase + numbers
+        return (address[i] >= '1' && address[i] <= '9') || (address[i] >= 'A' && address[i] <= 'Z');
+    }
+    else if(case_mask[i] == 'l') {
+        // Lowercase
+        return address[i] >= 'a' && address[i] <= 'z';
+    }
+    else if(case_mask[i] == 'u') {
+        // Uppercase
+        return address[i] >= 'A' && address[i] <= 'Z';
+    }
+    else if(case_mask[i] == 'x') {
+        if(mask[i] == '_')
+            return true;
+        char alt = mask[i] < 'a'? mask[i] + 32 : mask[i] - 32;
+        if(address[i] != mask[i] && address[i] != alt)
+            return false;
+        return true;
+    }
+    return false;
+}
+
+bool check_mask(vanity_settings *settings, char address[50]) {
+    char *mask = settings->mask;
+
+    size_t len = strlen(mask);
+    for(int i = 0 ; i < len ; i++)
+        if(check_char(settings, address, i) == false)
+            return false;
     return true;
 }
 
@@ -339,23 +365,58 @@ void print_heat_map_f() {
 
 #define UINT64_T_MAX 18446744073709551615UL
 
-uint64_t calculate_probability_50(vanity_settings *settings) {
+double probability_of_char(vanity_settings *settings, int i) {
     char *mask = settings->mask;
     char *case_mask = settings->case_mask;
 
-    double probability = 1.;
-    for(int i = 0 ; i < strlen(mask) ; i++) {
-        if(mask[i] != '_') {
-            if(base58char_to_i(mask[i]) < 0)
-                return UINT64_T_MAX;
-            if(case_mask[i] == '_')
-                probability *= heat_map_f[i][base58char_to_i(mask[i])];
-            else {
-                char alt = mask[i] < 'a'? mask[i] + 32 : mask[i] - 32;
-                probability *= heat_map_f[i][base58char_to_i(mask[i])] + heat_map_f[i][base58char_to_i(alt)];
-            }
-        }
+    double probability = 0;
+    if(case_mask[i] == '_') {
+        if(mask[i] == '_')
+            return 1;
+        if(base58char_to_i(mask[i]) < 0)
+            return 0;
+
+        return heat_map_f[i][base58char_to_i(mask[i])];
     }
+    else if(case_mask[i] == 'p') {
+        // Numbers
+        for(int u = 0 ; u < 9 ; u++)
+            probability += heat_map_f[i][u];
+        for(int u = 9 ; u < 9 + 24 ; u++)
+            probability += heat_map_f[i][u];
+        return probability;
+    }
+    else if(case_mask[i] == 'n') {
+        // Numbers
+        for(int u = 0 ; u < 9 ; u++)
+            probability += heat_map_f[i][u];
+        return probability;
+    }
+    else if(case_mask[i] == 'l') {
+        // Lowercase
+        for(int u = 9 + 24 ; u < 9 + 24 + 25 ; u++)
+            probability += heat_map_f[i][u];
+        return probability;
+    }
+    else if(case_mask[i] == 'u') {
+        // Uppercase
+        for(int u = 9 ; u < 9 + 24 ; u++)
+            probability += heat_map_f[i][u];
+        return probability;
+    }
+    else if(case_mask[i] == 'x') {
+        if(mask[i] == '_')
+            return 1;
+        char alt = mask[i] < 'a'? mask[i] + 32 : mask[i] - 32;
+        return heat_map_f[i][base58char_to_i(mask[i])] + heat_map_f[i][base58char_to_i(alt)];
+    }
+    return 0;
+}
+
+uint64_t calculate_probability_50(vanity_settings *settings) {
+    double probability = 1.;
+    for(int i = 0 ; i < 35 ; i++)
+        probability *= probability_of_char(settings, i);
     if (probability == 0.)
         return UINT64_T_MAX;
     return 1 / probability / 2;
@@ -386,9 +447,8 @@ void display_settings(vanity_settings settings) {
 vanity_settings default_settings() {
     vanity_settings settings;
     settings.threads = sysconf(_SC_NPROCESSORS_ONLN);
-    settings.testnet = true;
-//    settings.testnet = false;
-    settings.mask = NULL;
+    settings.testnet = false;
+    strcpy(settings.mask, "___________________________________");
     strcpy(settings.case_mask, "___________________________________");
 
     return settings;
@@ -398,12 +458,25 @@ void help(int argc, char **argv) {
     printf("Usage:\n  %s [OPTION...]\n\n", argv[0]);
     printf("Help Options:\n");
     printf("  -h                Show help options\n\n");
+    printf("Waves Options:\n");
+    printf("  -n {t or m}         t - Testnet, m - Mainnet [default]\n\n");
     printf("Mask Options:\n");
     printf("  -m {mask}         Char mask. _ is 'any character at this position'.\n  Any other character means 'this specific character at this position'.\n");
     printf("Example: '%s -m ____eaaa' may generate address 3MvMeaaaLm32f5JzsQQxYhqKL2fbrEQStCs.\n\n", argv[0]);
     printf("  -c {mask}         Case mask. ? means 'any case for a character'\n  _ means 'this specific case for a character'\n");
     printf("The default case mask is: ___________________________________\n");
-    printf("Example: '%s -m __waves -c __ooo__' may generate address \n", argv[0]);
+    printf("Case mask can consist only of _, u, l, n, x and p characters.\n");
+    printf("They mean:\n");
+    printf("  n - any number\n");
+    printf("  x - a character from character mask of any case [ex. a or A, c or C]\n");
+    printf("  u - any uppercase character\n");
+    printf("  l - any lowercase character\n");
+    printf("  p - any uppercase character or a number\n");
+    printf("  _ - exactly the same character as in character mask.\n\n");
+    printf("Example: '%s -m _____________________________N____N -c _____________________________xnnnnx'\n", argv[0]);
+    printf("         A sample result: 3PN7C7rasDZr4C48SWeiQbHjPmM4xN2892n\n");
+    printf("Example: '%s -c ppppppppppppppppppppppppppppppppppp -n t'\n", argv[0]);
+    printf("         A sample result: 3NCL45V25RUUXQ7YKB41G3ACW3KTUFPVYUV\n");
 }
 
 void *worker_thread(void *data) {
@@ -443,10 +516,35 @@ int sum_iterations(vanity_settings settings, worker_thread_struct *workers) {
     return sum;
 }
 
+void validate_case_mask(char *case_mask) {
+    bool valid = true;
+
+    for(int i = 0 ; i < strlen(case_mask) ; i++)
+        if(!(case_mask[i] == '_' || case_mask[i] == 'x' || case_mask[i] == 'n' || case_mask[i] == 'u' || case_mask[i] == 'l' || case_mask[i] == 'p'))
+            valid = false;
+
+    if(strlen(optarg) > 35) {
+        printf("The case mask cannot be longer than 35 characters.\n");
+        exit(1);
+    }
+
+    if(valid == false) {
+        printf("Case mask can consist only of _, u, l, n, x and p characters.\n");
+        printf("They mean:\n");
+        printf("  n - any number\n");
+        printf("  x - a character from character mask of any case [ex. a or A, c or C]\n");
+        printf("  u - any uppercase character\n");
+        printf("  l - any lowercase character\n");
+        printf("  p - any uppercase character or a number\n");
+        printf("  _ - exactly the same character as in character mask.\n");
+        exit(1);
+    }
+}
+
 vanity_settings parse_settings(int argc, char **argv) {
     vanity_settings settings = default_settings();
     int c;
-    while ((c = getopt (argc, argv, "hm:t:c:")) != -1)
+    while ((c = getopt (argc, argv, "hm:t:c:n:")) != -1)
         switch (c)
         {
           case 'h':
@@ -457,14 +555,21 @@ vanity_settings parse_settings(int argc, char **argv) {
                 help(argc, argv);
                 exit(1);
             }
-            settings.mask = optarg;
+            memcpy(settings.mask, optarg, strlen(optarg));
             break;
           case 'c':
-            if(strlen(optarg) > 35) {
+            validate_case_mask(optarg);
+            memcpy(settings.case_mask, optarg, strlen(optarg));
+            break;
+          case 'n':
+            if(strlen(optarg) > 1 || !(optarg[0] == 't' || optarg[0] == 'm')) {
                 help(argc, argv);
                 exit(1);
             }
-            memcpy(settings.case_mask, optarg, strlen(optarg));
+            if(optarg[0] == 't')
+                settings.testnet = true;
+            else if(optarg[0] == 'm')
+                settings.testnet = false;
             break;
           case 't':
             settings.threads = atoi(optarg);
@@ -481,10 +586,6 @@ vanity_settings parse_settings(int argc, char **argv) {
         }
 
     if(argc > optind) {
-        help(argc, argv);
-        exit(1);
-    }
-    if(settings.mask == NULL) {
         help(argc, argv);
         exit(1);
     }
