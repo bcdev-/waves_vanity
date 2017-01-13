@@ -408,7 +408,12 @@ double probability_of_char(vanity_settings *settings, int i) {
         if(mask[i] == '_')
             return 1;
         char alt = mask[i] < 'a'? mask[i] + 32 : mask[i] - 32;
-        return heat_map_f[i][base58char_to_i(mask[i])] + heat_map_f[i][base58char_to_i(alt)];
+        double prob = 0;
+        if(base58char_to_i(mask[i]) > 0)
+            prob += heat_map_f[i][base58char_to_i(mask[i])];
+        if(base58char_to_i(alt) > 0)
+            prob += heat_map_f[i][base58char_to_i(alt)];
+        return prob;
     }
     return 0;
 }
@@ -657,7 +662,13 @@ int main(int argc, char **argv) {
             int m = ((int)tval_result.tv_sec / 60) % 60;
             int s = (int)tval_result.tv_sec % 60;
 
-            printf("\rIterations: %lu   Elapsed time: %lu d %d h %d m %d s   Speed: %.2f keys/second   50%% chance of finding: %lu d %lu h %d m %d s", iterations, d, h, m, s, speed, probability_50_h / 24, probability_50_h % 24, probability_50_m, probability_50_s);
+            printf("\r%lu  %lud %dh %dm %ds  %.2f keys/second  50%% chance: %lud %luh %dm %ds", iterations, d, h, m, s, speed, probability_50_h / 24, probability_50_h % 24, probability_50_m, probability_50_s);
+
+            uint64_t probability_95_h = (probability_50 * 4 / speed) / 3600;
+            int probability_95_m = (uint64_t)((probability_50 * 4 / speed) / 60) % 60;
+            int probability_95_s = (uint64_t)(probability_50 * 4 / speed) % 60;
+
+            printf("  95%% chance: %lud %luh %dm %ds", probability_95_h / 24, probability_95_h % 24, probability_95_m, probability_95_s);
             printf("          \r");
 //            print_heat_map();
 //            print_heat_map_f();
