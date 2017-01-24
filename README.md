@@ -3,9 +3,9 @@
 
 A vanity address generator for the Waves Platform.
 
-Windows binary: https://github.com/bcdev-/waves_vanity/raw/master/releases/wavesvanity-v1.0.1-win64.zip
+Windows binary: https://github.com/bcdev-/waves_vanity/raw/master/releases/wavesvanity-v1.0.2-win64.zip
 
-Linux binary: https://github.com/bcdev-/waves_vanity/raw/master/releases/wavesvanity-v1.0.1-linux64
+Linux binary: https://github.com/bcdev-/waves_vanity/raw/master/releases/wavesvanity-v1.0.2-linux64
 
 ## Example
 ```
